@@ -4,148 +4,101 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/select.h>
-#include <errno.h>
 
+#define SERVER_IP "127.0.0.1"
 #define PORT 8080
-#define MAX_CLIENTS 10
 #define BUFFER_SIZE 1024
+#define XOR_KEY 0x5A  // Khóa XOR để mã hóa và giải mã
 
-void broadcast_message(int sender_fd, int *client_sockets, int num_client, char *message){
-    for( int i = 0 ; i<num_client ;i++){
-        int client_fd= client_sockets[i];
-        if(client_fd !=  sender_fd&& client_fd >0){
-            send(client_fd, message,strlen(message),0);
-        }
+void xor_cipher(char *data) {
+    for (int i = 0; data[i] != '\0'; i++) {
+        data[i] ^= XOR_KEY;
     }
 }
 
-
 int main() {
-    int server_fd, new_socket, client_sockets[MAX_CLIENTS], max_sd, activity, i;
-    struct sockaddr_in address;
-    int opt = 1;
-    fd_set readfds;
+    int sockfd;
+    struct sockaddr_in server_addr, sender_addr;
     char buffer[BUFFER_SIZE];
+    socklen_t addr_len = sizeof(server_addr);
+    socklen_t sender_addr_len = sizeof(sender_addr);
 
-    // Initialize all client sockets to 0
-    for (i = 0; i < MAX_CLIENTS; i++) {
-        client_sockets[i] = 0;
-    }
-
-    // Create socket
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-        perror("socket failed");
+    // Tạo socket UDP
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("Socket creation failed");
         exit(EXIT_FAILURE);
     }
 
-    // Set socket options
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
-        perror("setsockopt");
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr);
+
+    // Nhập thông điệp từ người dùng
+    printf("Nhập thông điệp gửi đến server: ");
+    fgets(buffer, BUFFER_SIZE, stdin);
+    buffer[strcspn(buffer, "\n")] = 0; // Loại bỏ ký tự newline
+
+    // Gửi thông điệp đến server
+    sendto(sockfd, buffer, strlen(buffer), 0, (struct sockaddr *)&server_addr, addr_len);
+    printf("Đã gửi: %s\n", buffer);
+
+    // Sử dụng select() để xử lý timeout
+    fd_set readfds;
+    struct timeval timeout;
+    FD_ZERO(&readfds);
+    FD_SET(sockfd, &readfds);
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+
+    int activity = select(sockfd + 1, &readfds, NULL, NULL, &timeout);
+    if (activity == -1) {
+        perror("Lỗi select()");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    } else if (activity == 0) {
+        printf("Không nhận được phản hồi từ server trong 5 giây.\n");
+        close(sockfd);
         exit(EXIT_FAILURE);
     }
 
-    // Define server address
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(PORT);
+    // Nhận dữ liệu từ server
+    int n = recvfrom(sockfd, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&sender_addr, &sender_addr_len);
+    if (n < 0) {
+        perror("recvfrom failed");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+    buffer[n] = '\0';
 
-    // Bind the socket
-    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        perror("bind failed");
+    // In địa chỉ IP của máy gửi
+    char sender_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &sender_addr.sin_addr, sender_ip, INET_ADDRSTRLEN);
+    printf("Nhận dữ liệu từ IP: %s\n", sender_ip);
+
+    // Xác minh danh tính server bằng memcmp()
+    struct sockaddr_in expected_addr;
+    memset(&expected_addr, 0, sizeof(expected_addr));
+    expected_addr.sin_family = AF_INET;
+    expected_addr.sin_port = htons(PORT);
+    inet_pton(AF_INET, SERVER_IP, &expected_addr.sin_addr);
+    
+    if (memcmp(&server_addr, &expected_addr, sizeof(struct sockaddr_in)) != 0) {
+        printf("Cảnh báo: Phản hồi không đến từ server mong đợi!\n");
+        close(sockfd);
         exit(EXIT_FAILURE);
     }
 
-    // Listen for incoming connections
-    if (listen(server_fd, 3) < 0) {
-        perror("listen");
-        exit(EXIT_FAILURE);
-    }
+    // Giải mã dữ liệu nhận được
+    xor_cipher(buffer);
+    printf("Dữ liệu sau khi giải mã: %s\n", buffer);
 
-    printf("Listening on port %d...\n", PORT);
+    // Gửi phản hồi lại cho server
+    strcpy(buffer, "Message received");
+    xor_cipher(buffer);
+    sendto(sockfd, buffer, strlen(buffer), 0, (struct sockaddr *)&server_addr, addr_len);
+    printf("Đã gửi phản hồi đến server.\n");
 
-    while (1) {
-        // Clear the socket set
-        FD_ZERO(&readfds);
-
-
-        // Add server socket to set
-        FD_SET(server_fd, &readfds);
-        max_sd = server_fd;
-
-        // Add child sockets to set
-        for (i = 0; i < MAX_CLIENTS; i++) {
-            // Socket descriptor
-            int sd = client_sockets[i];
-
-            // If valid socket descriptor then add to read list
-            if (sd > 0) {
-                FD_SET(sd, &readfds);
-            }
-
-            // Keep track of the maximum socket descriptor
-            if (sd > max_sd) {
-                max_sd = sd;    
-            }
-        }
-
-        // Wait for activity on one of the sockets
-        activity = select(max_sd + 1, &readfds, NULL, NULL, NULL);
-
-        if ((activity < 0) && (errno != EINTR)) {
-            printf("select error");
-        }
-
-        // If something happened on the master socket, then it's an incoming connection
-        if (FD_ISSET(server_fd, &readfds)) {
-            socklen_t addrlen = sizeof(address);
-            if ((new_socket = accept(server_fd, (struct sockaddr *)&address, &addrlen)) < 0) {
-                perror("accept");
-                exit(EXIT_FAILURE);
-            }
-
-            printf("New connection, socket fd is %d, ip is : %s, port : %d\n", 
-                   new_socket, inet_ntoa(address.sin_addr), ntohs(address.sin_port));
-
-            // Add new socket to array of sockets
-            for (i = 0; i < MAX_CLIENTS; i++) {
-                // If position is empty
-                if (client_sockets[i] == 0) {
-                    client_sockets[i] = new_socket;
-                    printf("Adding to list of sockets as %d\n", i);
-                    break;
-                }
-            }
-        }
-
-        // Check for IO operations on other sockets
-        for (i = 0; i < MAX_CLIENTS; i++) {
-            int sd = client_sockets[i];
-
-            if (FD_ISSET(sd, &readfds)) {
-                int valread;
-                if ((valread = read(sd, buffer, BUFFER_SIZE)) == 0) {
-                    // Client disconnected
-                    socklen_t addrlen = sizeof(address);
-                    getpeername(sd, (struct sockaddr *)&address, (socklen_t *)&addrlen);
-                    printf("Client disconnected, ip %s, port %d\n", 
-                           inet_ntoa(address.sin_addr), ntohs(address.sin_port));
-
-                    // Close the socket and mark as 0 in list for reuse
-                    close(sd);
-                    client_sockets[i] = 0;
-                } else {
-                    // Process the incoming message
-                    buffer[valread] = '\0';
-                    printf("Message from client %d: %s\n", i, buffer);
-
-                   //broadcast the messeges
-                   broadcast_message(sd, client_sockets, max_sd, buffer);
-                   printf("complete");
-
-                }
-            }
-        }
-    }
-
+    close(sockfd);
     return 0;
 }
