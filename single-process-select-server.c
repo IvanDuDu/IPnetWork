@@ -34,70 +34,70 @@ int main() {
     server_addr.sin_port = htons(PORT);
     inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr);
 
-    // Nhập thông điệp từ người dùng
-    printf("Nhập thông điệp gửi đến server: ");
-    fgets(buffer, BUFFER_SIZE, stdin);
-    buffer[strcspn(buffer, "\n")] = 0; // Loại bỏ ký tự newline
+    while (1) {
+        // Nhập thông điệp từ người dùng
+        printf("Nhập thông điệp gửi đến server: ");
+        fgets(buffer, BUFFER_SIZE, stdin);
+        buffer[strcspn(buffer, "\n")] = 0; // Loại bỏ ký tự newline
 
-    // Gửi thông điệp đến server
-    sendto(sockfd, buffer, strlen(buffer), 0, (struct sockaddr *)&server_addr, addr_len);
-    printf("Đã gửi: %s\n", buffer);
+        // Gửi thông điệp đến server
+        sendto(sockfd, buffer, strlen(buffer), 0, (struct sockaddr *)&server_addr, addr_len);
+        printf("Đã gửi: %s\n", buffer);
 
-    // Sử dụng select() để xử lý timeout
-    fd_set readfds;
-    struct timeval timeout;
-    FD_ZERO(&readfds);
-    FD_SET(sockfd, &readfds);
-    timeout.tv_sec = 5;
-    timeout.tv_usec = 0;
+        // Sử dụng select() để xử lý timeout
+        fd_set readfds;
+        struct timeval timeout;
+        FD_ZERO(&readfds);
+        FD_SET(sockfd, &readfds);
+        timeout.tv_sec = 5;
+        timeout.tv_usec = 0;
 
-    int activity = select(sockfd + 1, &readfds, NULL, NULL, &timeout);
-    if (activity == -1) {
-        perror("Lỗi select()");
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    } else if (activity == 0) {
-        printf("Không nhận được phản hồi từ server trong 5 giây.\n");
-        close(sockfd);
-        exit(EXIT_FAILURE);
+        int activity = select(sockfd + 1, &readfds, NULL, NULL, &timeout);
+        if (activity == -1) {
+            perror("Lỗi select()");
+            close(sockfd);
+            exit(EXIT_FAILURE);
+        } else if (activity == 0) {
+            printf("Không nhận được phản hồi từ server trong 5 giây.\n");
+            continue;
+        }
+
+        // Nhận dữ liệu từ server
+        int n = recvfrom(sockfd, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&sender_addr, &sender_addr_len);
+        if (n < 0) {
+            perror("recvfrom failed");
+            close(sockfd);
+            exit(EXIT_FAILURE);
+        }
+        buffer[n] = '\0';
+
+        // In địa chỉ IP của máy gửi
+        char sender_ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &sender_addr.sin_addr, sender_ip, INET_ADDRSTRLEN);
+        printf("Nhận dữ liệu từ IP: %s\n", sender_ip);
+
+        // Xác minh danh tính server bằng memcmp()
+        struct sockaddr_in expected_addr;
+        memset(&expected_addr, 0, sizeof(expected_addr));
+        expected_addr.sin_family = AF_INET;
+        expected_addr.sin_port = htons(PORT);
+        inet_pton(AF_INET, SERVER_IP, &expected_addr.sin_addr);
+        
+        if (memcmp(&server_addr, &expected_addr, sizeof(struct sockaddr_in)) != 0) {
+            printf("Cảnh báo: Phản hồi không đến từ server mong đợi!\n");
+            continue;
+        }
+
+        // Giải mã dữ liệu nhận được
+        xor_cipher(buffer);
+        printf("Dữ liệu sau khi giải mã: %s\n", buffer);
+
+        // Gửi phản hồi lại cho server
+        strcpy(buffer, "Message received");
+        xor_cipher(buffer);
+        sendto(sockfd, buffer, strlen(buffer), 0, (struct sockaddr *)&server_addr, addr_len);
+        printf("Đã gửi phản hồi đến server.\n");
     }
-
-    // Nhận dữ liệu từ server
-    int n = recvfrom(sockfd, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&sender_addr, &sender_addr_len);
-    if (n < 0) {
-        perror("recvfrom failed");
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    }
-    buffer[n] = '\0';
-
-    // In địa chỉ IP của máy gửi
-    char sender_ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &sender_addr.sin_addr, sender_ip, INET_ADDRSTRLEN);
-    printf("Nhận dữ liệu từ IP: %s\n", sender_ip);
-
-    // Xác minh danh tính server bằng memcmp()
-    struct sockaddr_in expected_addr;
-    memset(&expected_addr, 0, sizeof(expected_addr));
-    expected_addr.sin_family = AF_INET;
-    expected_addr.sin_port = htons(PORT);
-    inet_pton(AF_INET, SERVER_IP, &expected_addr.sin_addr);
-    
-    if (memcmp(&server_addr, &expected_addr, sizeof(struct sockaddr_in)) != 0) {
-        printf("Cảnh báo: Phản hồi không đến từ server mong đợi!\n");
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    }
-
-    // Giải mã dữ liệu nhận được
-    xor_cipher(buffer);
-    printf("Dữ liệu sau khi giải mã: %s\n", buffer);
-
-    // Gửi phản hồi lại cho server
-    strcpy(buffer, "Message received");
-    xor_cipher(buffer);
-    sendto(sockfd, buffer, strlen(buffer), 0, (struct sockaddr *)&server_addr, addr_len);
-    printf("Đã gửi phản hồi đến server.\n");
 
     close(sockfd);
     return 0;
