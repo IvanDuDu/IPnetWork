@@ -1,86 +1,63 @@
 // client.c
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 
-#define PORT 8080
-#define BUFFER_SIZE 1024
+#define PORT 12345
+#define MAX 1024
 
 int main() {
-    int client_socket;
-    struct sockaddr_in server_addr;
-    char buffer[BUFFER_SIZE];
-    int n;
+    int sock = 0;
+    struct sockaddr_in serv_addr;
+    char buffer[MAX];
+    int player_id = -1;
 
-    // Create a socket
-    if ((client_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("Socket creation failed");
-        exit(EXIT_FAILURE);
-    }
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(PORT);
 
-    // Setup the server address structure
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(PORT);
-
-    // Convert IPv4 address from text to binary form
-    if (inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr) <= 0) {
-        perror("Invalid address or address not supported");
-        close(client_socket);
-        exit(EXIT_FAILURE);
-    }
-
-    // Connect to the server
-    if (connect(client_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Connection failed");
-        close(client_socket);
-        exit(EXIT_FAILURE);
-    }
-    printf("Connected to server. Press any keys to receive questions\n:");
+    inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr);
+    connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
 
     while (1) {
-        // Get input from the user
-        fgets(buffer, BUFFER_SIZE, stdin);
+        memset(buffer, 0, MAX);
+        int valread = read(sock, buffer, MAX);
+        if (valread <= 0) break;
 
-        // Remove the newline character if it's present (fgets adds it)
-        if (buffer[0] != '\0' && buffer[strlen(buffer) - 1] == '\n') {
-            buffer[strlen(buffer) - 1] = '\0';
-        }
-
-
-        // Send the message to the server
-        send(client_socket, buffer, strlen(buffer), 0);
-
-            // Check if the string is empty. If it is, stop the program
-            if (buffer[0] == '\0') {
-                break;
-            }  
-
-
-        // Receive the echo back from the server    
-        
-        n = recv(client_socket, buffer, BUFFER_SIZE, 0);
-        if (n > 0) {
-            buffer[n] = '\0'; // Null-terminate the received string
-            printf("%s\n", buffer);
-        } else if (n == 0) {
-            printf("Server disconnected.\n");
+        if (strncmp(buffer, "WELCOME", 7) == 0) {
+            sscanf(buffer, "WELCOME %d", &player_id);
+            printf("You are player %d (%c)\n", player_id, player_id == 0 ? 'O' : 'X');
+        } else if (strncmp(buffer, "TURN", 4) == 0) {
+            int turn;
+            sscanf(buffer, "TURN %d", &turn);
+            if (turn == player_id) {
+                int row, col;
+                printf("Your turn. Enter row and col: ");
+                scanf("%d %d", &row, &col);
+                char msg[32];
+                sprintf(msg, "MOVE %d %d\n", row, col);
+                send(sock, msg, strlen(msg), 0);
+            }
+        } else if (strncmp(buffer, "MOVE", 4) == 0) {
+            int p, r, c;
+            sscanf(buffer, "MOVE %d %d %d", &p, &r, &c);
+            printf("Player %d moved at (%d, %d)\n", p, r, c);
+        } else if (strncmp(buffer, "WIN", 3) == 0) {
+            int winner;
+            sscanf(buffer, "WIN %d", &winner);
+            if (winner == player_id) printf("You win!\n");
+            else printf("You lose!\n");
             break;
-
-        } else {
-            perror("recv failed");
+        } else if (strncmp(buffer, "DRAW", 4) == 0) {
+            printf("Game is a draw.\n");
             break;
+        } else if (strncmp(buffer, "INVALID", 7) == 0) {
+            printf("Invalid move. Try again.\n");
         }
-
-        
-  
     }
-    
 
-    // Close the socket
-    close(client_socket);
-
+    close(sock);
     return 0;
 }
