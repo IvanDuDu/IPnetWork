@@ -1,164 +1,138 @@
-// concurrent_server.c
+// server.c
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <signal.h>
-#include <time.h>
 
-#define PORT 8080
-#define BUFFER_SIZE 1024
-#define NUM_QUESTIONS 10
-#define NUM_OPTIONS 4
+#define PORT 12345
+#define MAX 1024
 
-typedef struct {
-    char question[256]; 
-    char options[NUM_OPTIONS][128];  
-    int correct_index; 
-} Question;
+int board[3][3]; // 0: O, 1: X, -1: empty
 
-// Danh sách câu hỏi
-Question quiz[NUM_QUESTIONS] = {
-    {"What is the capital of France?", {"Paris", "London", "Berlin", "Rome"}, 0},
-    {"Which planet is known as the Red Planet?", {"Mars", "Venus", "Jupiter", "Saturn"}, 0},
-    {"What is the largest mammal?", {"Blue Whale", "Elephant", "Giraffe", "Hippopotamus"}, 0},
-    {"How many continents are there on Earth?", {"Seven", "Five", "Six", "Eight"}, 0},
-    {"What is the boiling point of water at sea level?", {"100°C", "90°C", "120°C", "80°C"}, 0},
-    {"Who developed the theory of relativity?", {"Albert Einstein", "Isaac Newton", "Nikola Tesla", "Galileo Galilei"}, 0},
-    {"Which gas do plants use for photosynthesis?", {"Carbon Dioxide", "Oxygen", "Nitrogen", "Hydrogen"}, 0},
-    {"What is the chemical symbol for gold?", {"Au", "Ag", "Pb", "Fe"}, 0},
-    {"What is the hardest natural substance on Earth?", {"Diamond", "Iron", "Quartz", "Granite"}, 0},
-    {"Which ocean is the largest?", {"Pacific Ocean", "Atlantic Ocean", "Indian Ocean", "Arctic Ocean"}, 0}
-};
+void init_board() {
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            board[i][j] = -1;
+}
 
-// Gửi câu hỏi và trộn ngẫu nhiên đáp án
-int Send_question(int connfd, Question ques) {
-    srand(time(NULL));
-
-    // Trộn thứ tự đáp án
-    int order[NUM_OPTIONS] = {0, 1, 2, 3};
-    for (int i = 3; i > 0; i--) {
-        int j = rand() % (i + 1);
-        int temp = order[i];
-        order[i] = order[j];
-        order[j] = temp;
-    }
-
-    // Gửi câu hỏi
-    send(connfd, ques.question, strlen(ques.question), 0);
-    sleep(1); // Tạo độ trễ nhẹ để tránh gửi quá nhanh
-
-    // Gửi các đáp án đã trộn
-    char option_buffer[BUFFER_SIZE];
-    for (int i = 0; i < NUM_OPTIONS; i++) {
-        snprintf(option_buffer, sizeof(option_buffer), "%d. %s\n", i + 1, ques.options[order[i]]);
-        send(connfd, option_buffer, strlen(option_buffer), 0);
-        sleep(1); // Độ trễ nhẹ giữa các lựa chọn
-    }
-
-    // Trả về chỉ số của đáp án đúng sau khi trộn
-    for (int i = 0; i < NUM_OPTIONS; i++) {
-        if (order[i] == ques.correct_index) {
-            return i + 1; // Đánh số từ 1 đến 4
+void print_board() {
+    printf("\nBoard:\n");
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            if (board[i][j] == -1) printf(".");
+            else if (board[i][j] == 0) printf("O");
+            else printf("X");
+            printf(" ");
         }
-    }
-    return -1; // Lỗi (không xảy ra)
-}
-
-// Kiểm tra đáp án
-int check_answer(int connfd, int answer, int correct_ans) {
-    if (answer == correct_ans) {
-        send(connfd, "Correct\n", 8, 0);
-        return 1;
-    } else {
-        send(connfd, "Wrong\n", 6, 0);
-        return 0;
+        printf("\n");
     }
 }
 
-// Xử lý client
-void handle_client(int connfd) {
-    char buffer[BUFFER_SIZE];
-    int n, sumPoint = 0;
-
-    for (int j = 0; j < NUM_QUESTIONS; j++) {
-        int correct_ans = Send_question(connfd, quiz[j]);
-
-        // Nhận câu trả lời từ client
-        n = recv(connfd, buffer, BUFFER_SIZE, 0);
-        if (n <= 0) break; // Nếu client đóng kết nối
-        buffer[n] = '\0';  // Kết thúc chuỗi
-
-        int ans = atoi(buffer); // Chuyển chuỗi sang số
-        sumPoint += check_answer(connfd, ans, correct_ans);
+int check_winner() {
+    for (int i = 0; i < 3; i++) {
+        if (board[i][0] != -1 && board[i][0] == board[i][1] && board[i][1] == board[i][2])
+            return board[i][0];
+        if (board[0][i] != -1 && board[0][i] == board[1][i] && board[1][i] == board[2][i])
+            return board[0][i];
     }
-
-    // Gửi điểm số cuối cùng
-    char result[50];
-    snprintf(result, sizeof(result), "Final Score: %d/%d\n", sumPoint, NUM_QUESTIONS);
-    send(connfd, result, strlen(result), 0);
-
-    close(connfd);
+    if (board[0][0] != -1 && board[0][0] == board[1][1] && board[1][1] == board[2][2])
+        return board[0][0];
+    if (board[0][2] != -1 && board[0][2] == board[1][1] && board[1][1] == board[2][0])
+        return board[0][2];
+    return -1;
 }
 
-// Xử lý tín hiệu SIGCHLD để tránh zombie process
-void sigchld_handler(int sig) {
-    (void)sig; // Ignore warning
-    while (waitpid(-1, NULL, WNOHANG) > 0);
+int is_draw() {
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            if (board[i][j] == -1)
+                return 0;
+    return 1;
+}
+
+void send_to_all(int clients[], char *msg) {
+    send(clients[0], msg, strlen(msg), 0);
+    send(clients[1], msg, strlen(msg), 0);
 }
 
 int main() {
-    int listenfd, connfd;
-    struct sockaddr_in server_addr, client_addr;
-    socklen_t addr_len = sizeof(client_addr);
-    pid_t pid;
+    int server_fd, new_socket[2];
+    struct sockaddr_in address;
+    int addrlen = sizeof(address);
+    char buffer[MAX];
+    int current_player = 0;
 
-    // Tạo socket
-    if ((listenfd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-        perror("Socket creation failed");
+    init_board();
+
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd == 0) {
+        perror("socket failed");
         exit(EXIT_FAILURE);
     }
 
-    // Cấu hình địa chỉ server
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(PORT);
+    int opt = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-    // Gán socket với địa chỉ và cổng
-    if (bind(listenfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Bind failed");
-        exit(EXIT_FAILURE);
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(PORT);
+
+    bind(server_fd, (struct sockaddr *)&address, sizeof(address));
+    listen(server_fd, 2);
+
+    printf("Waiting for players...\n");
+    for (int i = 0; i < 2; i++) {
+        new_socket[i] = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen);
+        printf("Player %d connected.\n", i);
+        char msg[32];
+        sprintf(msg, "WELCOME %d\n", i);
+        send(new_socket[i], msg, strlen(msg), 0);
     }
-
-    // Lắng nghe kết nối
-    if (listen(listenfd, 5) < 0) {
-        perror("Listen failed");
-        exit(EXIT_FAILURE);
-    }
-
-    // Xử lý SIGCHLD
-    signal(SIGCHLD, sigchld_handler);
-
-    printf("Server is listening on port %d...\n", PORT);
 
     while (1) {
-        // Chấp nhận kết nối từ client
-        connfd = accept(listenfd, (struct sockaddr *)&client_addr, &addr_len);
-        if (connfd < 0) continue;
+        char turn_msg[32];
+        sprintf(turn_msg, "TURN %d\n", current_player);
+        send(new_socket[current_player], turn_msg, strlen(turn_msg), 0);
 
-        // Fork process để xử lý client
-        pid = fork();
-        if (pid == 0) {
-            close(listenfd);
-            handle_client(connfd);
-            exit(0);
-        } else {
-            close(connfd);
+        memset(buffer, 0, MAX);
+        int valread = read(new_socket[current_player], buffer, MAX);
+        if (valread <= 0) break;
+
+        int row, col;
+        if (sscanf(buffer, "MOVE %d %d", &row, &col) != 2) {
+            send(new_socket[current_player], "INVALID\n", 8, 0);
+            continue;
         }
+
+        if (row < 0 || row > 2 || col < 0 || col > 2 || board[row][col] != -1) {
+            send(new_socket[current_player], "INVALID\n", 8, 0);
+            continue;
+        }
+
+        board[row][col] = current_player;
+        print_board();
+
+        char move_msg[32];
+        sprintf(move_msg, "MOVE %d %d %d\n", current_player, row, col);
+        send_to_all(new_socket, move_msg);
+
+        int winner = check_winner();
+        if (winner != -1) {
+            char win_msg[32];
+            sprintf(win_msg, "WIN %d\n", winner);
+            send_to_all(new_socket, win_msg);
+            break;
+        } else if (is_draw()) {
+            send_to_all(new_socket, "DRAW\n");
+            break;
+        }
+
+        current_player = 1 - current_player;
     }
 
+    close(new_socket[0]);
+    close(new_socket[1]);
+    close(server_fd);
     return 0;
 }
