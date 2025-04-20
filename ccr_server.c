@@ -10,12 +10,13 @@
 
 int board[3][3]; // 0: O, 1: X, -1: empty
 
+//khoi tao bang rong
 void init_board() {
     for (int i = 0; i < 3; i++)
         for (int j = 0; j < 3; j++)
             board[i][j] = -1;
 }
-
+//in ra bang sau moi lan cap nhat
 void print_board() {
     printf("\nBoard:\n");
     for (int i = 0; i < 3; i++) {
@@ -28,7 +29,7 @@ void print_board() {
         printf("\n");
     }
 }
-
+//kiem tra xem da co nguoi thang cuoc chua
 int check_winner() {
     for (int i = 0; i < 3; i++) {
         if (board[i][0] != -1 && board[i][0] == board[i][1] && board[i][1] == board[i][2])
@@ -42,7 +43,7 @@ int check_winner() {
         return board[0][2];
     return -1;
 }
-
+//kiem tra hoa
 int is_draw() {
     for (int i = 0; i < 3; i++)
         for (int j = 0; j < 3; j++)
@@ -50,14 +51,15 @@ int is_draw() {
                 return 0;
     return 1;
 }
-
+//loan bao thong diep
 void send_to_all(int clients[], char *msg) {
     send(clients[0], msg, strlen(msg), 0);
     send(clients[1], msg, strlen(msg), 0);
+    sleep(1);
 }
 
 int main() {
-    int server_fd, new_socket[2];
+    int server_fd, new_socket[2];  //tao socket
     struct sockaddr_in address;
     int addrlen = sizeof(address);
     char buffer[MAX];
@@ -82,7 +84,7 @@ int main() {
     listen(server_fd, 2);
 
     printf("Waiting for players...\n");
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 2; i++) {   //wait for 2 players
         new_socket[i] = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen);
         printf("Player %d connected.\n", i);
         char msg[32];
@@ -94,7 +96,7 @@ int main() {
         char turn_msg[32];
         sprintf(turn_msg, "TURN %d\n", current_player);
         send(new_socket[current_player], turn_msg, strlen(turn_msg), 0);
-
+        printf("1.5\n");
         memset(buffer, 0, MAX);
         int valread = read(new_socket[current_player], buffer, MAX);
         if (valread <= 0) break;
@@ -102,11 +104,13 @@ int main() {
         int row, col;
         if (sscanf(buffer, "MOVE %d %d", &row, &col) != 2) {
             send(new_socket[current_player], "INVALID\n", 8, 0);
+            sleep(1);
             continue;
         }
 
         if (row < 0 || row > 2 || col < 0 || col > 2 || board[row][col] != -1) {
             send(new_socket[current_player], "INVALID\n", 8, 0);
+            sleep(1);
             continue;
         }
 
@@ -118,6 +122,7 @@ int main() {
         send_to_all(new_socket, move_msg);
 
         int winner = check_winner();
+        printf("3! \n");
         if (winner != -1) {
             char win_msg[32];
             sprintf(win_msg, "WIN %d\n", winner);
