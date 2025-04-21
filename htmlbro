@@ -1,22 +1,87 @@
-<!DOCTYPE html>
-<html>
-<head>
-<title>My Simple HTTP Server</title>
-<link rel="stylesheet" type="text/css"
-href="/assets/style.css">
-</head>
-<body>
-<h1>Welcome to My C HTTP Server!</h1>
-<p>This page is served by a C program using fork().</p>
-</body>
-</html>
-assets/style.cssbody {
-background-color: f2f2f2;
-font-family: Arial, sans-serif;
-color: 333;
-text-align: center;
-margin-top: 50px;
-}
-h1 {
-color: 0077cc;
+#include <sys/stat.h> // cho stat()
+
+void handle_client(int client_sock) {
+    char buffer[BUFFER_SIZE] = {0};
+    int bytes_received = recv(client_sock, buffer, BUFFER_SIZE - 1, 0);
+    if (bytes_received <= 0) {
+        perror("recv failed");
+        close(client_sock);
+        return;
+    }
+
+    char method[8], uri[1024];
+    sscanf(buffer, "%s %s", method, uri);
+    printf("Method: %s\n", method);
+    printf("URI: %s\n", uri);
+
+    if (strcmp(uri, "/") == 0) {
+        // Trả về HTML có nhúng CSS từ file ngoài
+        const char *body =
+            "<!DOCTYPE html>\n"
+            "<html>\n"
+            "<head>\n"
+            "<link rel=\"stylesheet\" href=\"/assets/style.css\">\n"
+            "</head>\n"
+            "<body>\n"
+            "<h1>Hello from your forked HTTP server!</h1>\n"
+            "</body>\n"
+            "</html>\n";
+
+        int body_len = strlen(body);
+
+        char header[256];
+        snprintf(header, sizeof(header),
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/html\r\n"
+            "Content-Length: %d\r\n"
+            "Connection: close\r\n"
+            "\r\n", body_len);
+
+        send(client_sock, header, strlen(header), 0);
+        send(client_sock, body, body_len, 0);
+    } else if (strcmp(uri, "/assets/style.css") == 0) {
+        // Trả về nội dung file style.css
+        FILE *fp = fopen("assets/style.css", "r");
+        if (fp == NULL) {
+            const char *not_found = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+            send(client_sock, not_found, strlen(not_found), 0);
+            close(client_sock);
+            exit(0);
+        }
+
+        struct stat st;
+        stat("assets/style.css", &st);
+        int size = st.st_size;
+
+        char *css_content = malloc(size + 1);
+        fread(css_content, 1, size, fp);
+        css_content[size] = '\0';
+        fclose(fp);
+
+        char header[256];
+        snprintf(header, sizeof(header),
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/css\r\n"
+            "Content-Length: %d\r\n"
+            "Connection: close\r\n"
+            "\r\n", size);
+
+        send(client_sock, header, strlen(header), 0);
+        send(client_sock, css_content, size, 0);
+
+        free(css_content);
+    } else {
+        // 404 nếu không phải URI hợp lệ
+        const char *not_found =
+            "HTTP/1.1 404 Not Found\r\n"
+            "Content-Type: text/html\r\n"
+            "Content-Length: 43\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "<h1>404 Not Found</h1><p>URI not found</p>";
+        send(client_sock, not_found, strlen(not_found), 0);
+    }
+
+    close(client_sock);
+    exit(0);
 }
