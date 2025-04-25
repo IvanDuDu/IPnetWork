@@ -33,88 +33,115 @@ void handle_client(int client_sock) {
     sscanf(buffer, "%s %s", method, uri);
     printf("Method: %s\n", method);
     printf("URI: %s\n", uri);
-    if(strcmp(method,"GET")==0){
-    if (strcmp(uri, "/") == 0) {
-        // Trả về HTML có nhúng CSS từ file ngoài
-        const char *body =
-            "<!DOCTYPE html>\n"
-            "<html>\n"
-            "<head>\n"
-            "<link rel=\"stylesheet\" href=\"index.html\">\n"
-            "</head>\n"
-            "<body>\n"
-            "<h1>Hello from your forked HTTP server!</h1>\n"
-            "</body>\n"
-            "</html>\n";
 
-        int body_len = strlen(body);
+    if (strcmp(method, "GET") == 0) {
+        if (strcmp(uri, "/") == 0) {
+            const char *body =
+                "<!DOCTYPE html>\n"
+                "<html>\n"
+                "<head>\n"
+                "<link rel=\"stylesheet\" href=\"/assets/style.css\">\n"
+                "</head>\n"
+                "<body>\n"
+                "<h1>GET: Hello from your server!</h1>\n"
+                "</body>\n"
+                "</html>\n";
 
-        char header[256];
-        snprintf(header, sizeof(header),
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: text/html\r\n"
-            "Content-Length: %d\r\n"
-            "Connection: close\r\n"
-            "\r\n", body_len);
+            int body_len = strlen(body);
+            char header[256];
+            snprintf(header, sizeof(header),
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/html\r\n"
+                "Content-Length: %d\r\n"
+                "Connection: close\r\n\r\n", body_len);
 
-        send(client_sock, header, strlen(header), 0);
-        send(client_sock, body, body_len, 0);
-    } else if (strcmp(uri, "/assets/style.css") == 0) {
-        // Trả về nội dung file style.css
-        FILE *fp = fopen("/assets/style.css", "r");
-        if (fp == NULL) {
+            send(client_sock, header, strlen(header), 0);
+            send(client_sock, body, body_len, 0);
+        }
+        else if (strcmp(uri, "/assets/style.css") == 0) {
+            FILE *fp = fopen("assets/style.css", "r");
+            if (fp == NULL) {
+                const char *not_found = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+                send(client_sock, not_found, strlen(not_found), 0);
+                close(client_sock);
+                exit(0);
+            }
+
+            struct stat st;
+            stat("assets/style.css", &st);
+            int size = st.st_size;
+            char *css_content = malloc(size + 1);
+            fread(css_content, 1, size, fp);
+            css_content[size] = '\0';
+            fclose(fp);
+
+            char header[256];
+            snprintf(header, sizeof(header),
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/css\r\n"
+                "Content-Length: %d\r\n"
+                "Connection: close\r\n\r\n", size);
+
+            send(client_sock, header, strlen(header), 0);
+            send(client_sock, css_content, size, 0);
+            free(css_content);
+        } else {
             const char *not_found = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
             send(client_sock, not_found, strlen(not_found), 0);
-            close(client_sock);
-            exit(0);
         }
+    }
 
-        struct stat st;
-        stat("assets/style.css", &st);
-        int size = st.st_size;
-
-        char *css_content = malloc(size + 1);
-        fread(css_content, 1, size, fp);
-        css_content[size] = '\0';
-        fclose(fp);
-
+    else if (strcmp(method, "POST") == 0) {
+        const char *body = "<h1>POST request received</h1>";
+        int body_len = strlen(body);
         char header[256];
         snprintf(header, sizeof(header),
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: text/css\r\n"
-            "Content-Length: %d\r\n"
-            "Connection: close\r\n"
-            "\r\n", size);
-
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", body_len);
         send(client_sock, header, strlen(header), 0);
-        send(client_sock, css_content, size, 0);
+        send(client_sock, body, body_len, 0);
+    }
 
-        free(css_content);
-    } else {
-        // 404 nếu không phải URI hợp lệ
-        const char *not_found =
-            "HTTP/1.1 404 Not Found\r\n"
-            "Content-Type: text/html\r\n"
-            "Content-Length: 43\r\n"
-            "Connection: close\r\n"
-            "\r\n"
-            "<h1>404 Not Found</h1><p>URI not found</p>";
-        send(client_sock, not_found, strlen(not_found), 0);
-    }}else{
-        const char *not_found =
-            "HTTP/1.1 405 Not assist\r\n"
-            "Content-Type: text/html\r\n"
-            "Content-Length: 43\r\n"
-            "Connection: close\r\n"
-            "\r\n"
-            "<h1>404 Not Found</h1><p>URI not found</p>";
-        send(client_sock, not_found, strlen(not_found), 0);
+    else if (strcmp(method, "PUT") == 0) {
+        const char *body = "<h1>PUT request received</h1>";
+        int body_len = strlen(body);
+        char header[256];
+        snprintf(header, sizeof(header),
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", body_len);
+        send(client_sock, header, strlen(header), 0);
+        send(client_sock, body, body_len, 0);
+    }
 
+    else if (strcmp(method, "DELETE") == 0) {
+        const char *body = "<h1>DELETE request received</h1>";
+        int body_len = strlen(body);
+        char header[256];
+        snprintf(header, sizeof(header),
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", body_len);
+        send(client_sock, header, strlen(header), 0);
+        send(client_sock, body, body_len, 0);
+    }
+
+    else if (strcmp(method, "HEAD") == 0) {
+        const char *body = "<h1>HEAD request</h1>"; // thực ra không gửi body
+        int body_len = strlen(body);
+        char header[256];
+        snprintf(header, sizeof(header),
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", body_len);
+        send(client_sock, header, strlen(header), 0);
+    }
+
+    else {
+        const char *not_supported =
+            "HTTP/1.1 405 Method Not Allowed\r\n"
+            "Content-Length: 0\r\n"
+            "Connection: close\r\n\r\n";
+        send(client_sock, not_supported, strlen(not_supported), 0);
     }
 
     close(client_sock);
     exit(0);
 }
+
 
 int main() {
     int listenfd, connfd;
