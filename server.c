@@ -114,10 +114,8 @@ void handle_client(int client_sock) {
         const char *html_body = "<html>\
 <head><title>POST Received</title></head>\
 <body style='background-color: #f2f2f2; font-family: Arial, sans-serif; text-align: center; margin-top: 50px;'>\
-<h1 style='color: #0077cc;'>Dữ liệu đã được nhận!</h1>\
-<p>Cảm ơn bạn đã gửi thông tin.</p>\
+<h1 style='color: #0077cc;'>Recieved</h1>\
 </body></html>";
-
         char response[4096];
         snprintf(response, sizeof(response),
             "HTTP/1.1 200 OK\r\n"
