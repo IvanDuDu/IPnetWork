@@ -91,15 +91,46 @@ void handle_client(int client_sock) {
         }
     }
 
-    else if (strcmp(method, "POST") == 0) {
-        const char *body = "<h1>POST request received</h1>";
-        int body_len = strlen(body);
-        char header[256];
-        snprintf(header, sizeof(header),
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", body_len);
-        send(client_sock, header, strlen(header), 0);
-        send(client_sock, body, body_len, 0);
+   else if (strcmp(method, "POST") == 0) {
+    // Tìm vị trí body
+    char *body_ptr = strstr(buffer, "\r\n\r\n");
+    if (body_ptr != NULL) {
+        body_ptr += 4; // Bỏ qua \r\n\r\n
+
+        // Ghi vào file post_data.txt
+        FILE *fp = fopen("post_data.txt", "a");
+        if (fp) {
+            fwrite(body_ptr, 1, strlen(body_ptr), fp);
+            fwrite("\n", 1, 1, fp); // xuống dòng
+            fclose(fp);
+        } else {
+            perror("Không thể mở post_data.txt");
+        }
+
+        // In ra stdout
+        printf("POST received:\n%s\n", body_ptr);
+
+        // Tạo HTML response
+        const char *html_body = "<html>\
+<head><title>POST Received</title></head>\
+<body style='background-color: #f2f2f2; font-family: Arial, sans-serif; text-align: center; margin-top: 50px;'>\
+<h1 style='color: #0077cc;'>Dữ liệu đã được nhận!</h1>\
+<p>Cảm ơn bạn đã gửi thông tin.</p>\
+</body></html>";
+
+        char response[4096];
+        snprintf(response, sizeof(response),
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/html\r\n"
+            "Content-Length: %zu\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "%s",
+            strlen(html_body), html_body);
+
+        send(client_sock, response, strlen(response), 0);
     }
+}
 
 else if (strcmp(method, "PUT") == 0) {
     // Tìm vị trí body bắt đầu trong request
