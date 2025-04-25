@@ -101,25 +101,49 @@ void handle_client(int client_sock) {
         send(client_sock, body, body_len, 0);
     }
 
-    else if (strcmp(method, "PUT") == 0) {
-        const char *body = "<h1>PUT request received</h1>";
-        int body_len = strlen(body);
-        char header[256];
-        snprintf(header, sizeof(header),
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", body_len);
-        send(client_sock, header, strlen(header), 0);
-        send(client_sock, body, body_len, 0);
-    }
+else if (strcmp(method, "PUT") == 0) {
+    // Tìm vị trí body bắt đầu trong request
+    char *body_ptr = strstr(buffer, "\r\n\r\n");
+    if (body_ptr != NULL) {
+        body_ptr += 4; // nhảy qua đoạn "\r\n\r\n"
 
-    else if (strcmp(method, "DELETE") == 0) {
-        const char *body = "<h1>DELETE request received</h1>";
-        int body_len = strlen(body);
-        char header[256];
-        snprintf(header, sizeof(header),
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", body_len);
-        send(client_sock, header, strlen(header), 0);
-        send(client_sock, body, body_len, 0);
+        // Tạo file với tên dựa trên URI (bỏ dấu / đầu tiên)
+        char filepath[1024];
+        snprintf(filepath, sizeof(filepath), ".%s", uri); // ví dụ /data.txt → ./data.txt
+
+        FILE *fp = fopen(filepath, "w");
+        if (fp) {
+            fwrite(body_ptr, 1, strlen(body_ptr), fp);
+            fclose(fp);
+
+            const char *response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            send(client_sock, response, strlen(response), 0);
+        } else {
+            const char *response = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            send(client_sock, response, strlen(response), 0);
+        }
     }
+}
+
+else if (strcmp(method, "DELETE") == 0) {
+    // Tạo đường dẫn file tương ứng URI
+    char filepath[1024];
+    snprintf(filepath, sizeof(filepath), ".%s", uri);
+
+    if (access(filepath, F_OK) == 0) {
+        if (remove(filepath) == 0) {
+            const char *response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            send(client_sock, response, strlen(response), 0);
+        } else {
+            const char *response = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            send(client_sock, response, strlen(response), 0);
+        }
+    } else {
+        const char *response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        send(client_sock, response, strlen(response), 0);
+    }
+}
+
 
     else if (strcmp(method, "HEAD") == 0) {
         const char *body = "<h1>HEAD request</h1>"; // thực ra không gửi body
