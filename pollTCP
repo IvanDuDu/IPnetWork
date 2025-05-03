@@ -1,0 +1,97 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+#define PORT 8888
+#define MAX_CLIENTS 100
+
+int main() {
+    int listener, new_client;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+
+    // Tạo socket lắng nghe
+    listener = socket(AF_INET, SOCK_STREAM, 0);
+    if (listener < 0) {
+        perror("socket failed");
+        exit(1);
+    }
+
+    // Gán địa chỉ cho socket
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(PORT);
+    if (bind(listener, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("bind failed");
+        exit(1);
+    }
+
+    listen(listener, 5);
+    printf("Server đang lắng nghe ở port %d...\n", PORT);
+
+    // Mảng các pollfd
+    struct pollfd fds[MAX_CLIENTS];
+    int num_fds = 1;
+
+    // Thêm listener vào danh sách theo dõi
+    fds[0].fd = listener;
+    fds[0].events = POLLIN;
+
+    while (1) {
+        int poll_count = poll(fds, num_fds, -1);
+        if (poll_count < 0) {
+            perror("poll error");
+            break;
+        }
+
+        for (int i = 0; i < num_fds; i++) {
+            if (fds[i].revents & POLLIN) {
+                if (fds[i].fd == listener) {
+                    // Có kết nối mới
+                    new_client = accept(listener, (struct sockaddr*)&client_addr, &addr_len);
+                    if (new_client < 0) {
+                        perror("accept error");
+                        continue;
+                    }
+
+                    printf("Client mới kết nối: %d (%s:%d)\n", new_client,
+                           inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+
+                    // Thêm vào danh sách theo dõi
+                    if (num_fds < MAX_CLIENTS) {
+                        fds[num_fds].fd = new_client;
+                        fds[num_fds].events = POLLIN;
+                        num_fds++;
+                    } else {
+                        printf("Quá nhiều client!\n");
+                        close(new_client);
+                    }
+                } else {
+                    // Nhận dữ liệu từ client
+                    char buffer[1024];
+                    int bytes_read = recv(fds[i].fd, buffer, sizeof(buffer) - 1, 0);
+                    if (bytes_read <= 0) {
+                        // Client ngắt kết nối
+                        printf("Client %d ngắt kết nối.\n", fds[i].fd);
+                        close(fds[i].fd);
+                        // Xóa khỏi danh sách
+                        fds[i] = fds[num_fds - 1];
+                        num_fds--;
+                        i--; // Lùi lại kiểm tra fd mới vào chỗ cũ
+                    } else {
+                        buffer[bytes_read] = '\0';
+                        printf("Client %d gửi: %s\n", fds[i].fd, buffer);
+                    }
+                }
+            }
+        }
+    }
+
+    close(listener);
+    return 0;
+}
