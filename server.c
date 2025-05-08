@@ -35,12 +35,12 @@ int main() {
     printf("Server: %s\n", buffer);
 
     // Gửi USER và PASS
-    char *user = "USER user\r\n";
+    char *user = "USER myuser\r\n";
     send(sock, user, strlen(user), 0);
     recv(sock, buffer, sizeof(buffer), 0);
     printf("Server: %s\n", buffer);
 
-    char *pass = "PASS pass\r\n";
+    char *pass = "PASS 123456\r\n";
     send(sock, pass, strlen(pass), 0);
     recv(sock, buffer, sizeof(buffer), 0);
     printf("Server: %s\n", buffer);
@@ -57,14 +57,14 @@ int main() {
            &ip1, &ip2, &ip3, &ip4, &port1, &port2);
     printf("Data connection IP: %d.%d.%d.%d, Port: %d\n", ip1, ip2, ip3, ip4, port1 * 256 + port2);
 
-    // Tạo kết nối dữ liệu
+   
     data_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (data_sock < 0) {
         perror("Data socket failed");
         exit(1);
     }
 
-    // Kết nối đến cổng dữ liệu
+   
     data_server.sin_family = AF_INET;
     data_server.sin_port = htons(port1 * 256 + port2);
     data_server.sin_addr.s_addr = inet_addr("127.0.0.1");
@@ -80,16 +80,15 @@ int main() {
     recv(data_sock, buffer, sizeof(buffer), 0);
     printf("File List:\n%s\n", buffer);
 
-    // Đóng kết nối dữ liệu
+   
     close(data_sock);
 
-    // Gửi lệnh RETR để tải file
+  
     char *retr_cmd = "RETR test.txt\r\n";
     send(sock, retr_cmd, strlen(retr_cmd), 0);
     recv(data_sock, buffer, sizeof(buffer), 0);
     printf("File Content:\n%s\n", buffer);
 
-    // Đóng kết nối điều khiển
     close(sock);
 
     return 0;
