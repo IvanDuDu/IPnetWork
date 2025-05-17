@@ -7,89 +7,163 @@
 
 #define FTP_PORT 21
 
-int main() {
-    int sock, data_sock;
-    struct sockaddr_in server, data_server;
+void recv_response(int sock) {
     char buffer[1024];
-
-    // Tạo socket cho kết nối điều khiển
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        perror("Socket failed");
-        exit(1);
-    }
-
-    // Cấu hình server FTP
-    server.sin_family = AF_INET;
-    server.sin_port = htons(FTP_PORT);
-    server.sin_addr.s_addr = inet_addr("127.0.0.1");
-
-    // Kết nối đến server
-    if (connect(sock, (struct sockaddr *)&server, sizeof(server)) < 0) {
-        perror("Connection failed");
-        exit(1);
-    }
-
-    // Nhận thông báo chào mừng (220)
-    recv(sock, buffer, sizeof(buffer), 0);
+    int bytes = recv(sock, buffer, sizeof(buffer) - 1, 0);
+    buffer[bytes] = '\0';
     printf("Server: %s\n", buffer);
+}
 
-    // Gửi USER và PASS
-    char *user = "USER myuser\r\n";
-    send(sock, user, strlen(user), 0);
-    recv(sock, buffer, sizeof(buffer), 0);
-    printf("Server: %s\n", buffer);
-
-    char *pass = "PASS 123456\r\n";
-    send(sock, pass, strlen(pass), 0);
-    recv(sock, buffer, sizeof(buffer), 0);
-    printf("Server: %s\n", buffer);
-
-    // Gửi PASV để lấy thông tin kết nối dữ liệu
+int open_data_connection(int control_sock) {
+    char buffer[1024];
     char *pasv = "PASV\r\n";
-    send(sock, pasv, strlen(pasv), 0);
-    recv(sock, buffer, sizeof(buffer), 0);
+    send(control_sock, pasv, strlen(pasv), 0);
+    recv(control_sock, buffer, sizeof(buffer), 0);
     printf("Server: %s\n", buffer);
 
-    // Phân tích phản hồi PASV
     int ip1, ip2, ip3, ip4, port1, port2;
     sscanf(buffer, "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)",
            &ip1, &ip2, &ip3, &ip4, &port1, &port2);
-    printf("Data connection IP: %d.%d.%d.%d, Port: %d\n", ip1, ip2, ip3, ip4, port1 * 256 + port2);
+    int data_port = port1 * 256 + port2;
 
-   
-    data_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (data_sock < 0) {
-        perror("Data socket failed");
-        exit(1);
-    }
+    struct sockaddr_in data_addr;
+    int data_sock = socket(AF_INET, SOCK_STREAM, 0);
+    data_addr.sin_family = AF_INET;
+    data_addr.sin_port = htons(data_port);
+    data_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
-   
-    data_server.sin_family = AF_INET;
-    data_server.sin_port = htons(port1 * 256 + port2);
-    data_server.sin_addr.s_addr = inet_addr("127.0.0.1");
-
-    if (connect(data_sock, (struct sockaddr *)&data_server, sizeof(data_server)) < 0) {
+    if (connect(data_sock, (struct sockaddr *)&data_addr, sizeof(data_addr)) < 0) {
         perror("Data connection failed");
         exit(1);
     }
 
-    // Gửi lệnh LIST
+    return data_sock;
+}
+
+void ftp_login(int control_sock, const char* user, const char* pass) {
+    char buffer[1024];
+    recv_response(control_sock);
+
+    char cmd[256];
+    sprintf(cmd, "USER %s\r\n", user);
+    send(control_sock, cmd, strlen(cmd), 0);
+    recv_response(control_sock);
+
+    sprintf(cmd, "PASS %s\r\n", pass);
+    send(control_sock, cmd, strlen(cmd), 0);
+    recv_response(control_sock);
+}
+
+void ftp_list(int control_sock) {
+    int data_sock = open_data_connection(control_sock);
+
     char *list_cmd = "LIST\r\n";
-    send(sock, list_cmd, strlen(list_cmd), 0);
-    recv(data_sock, buffer, sizeof(buffer), 0);
-    printf("File List:\n%s\n", buffer);
+    send(control_sock, list_cmd, strlen(list_cmd), 0);
 
-   
+    char buffer[1024];
+    int bytes;
+    printf("File List:\n");
+    while ((bytes = recv(data_sock, buffer, sizeof(buffer)-1, 0)) > 0) {
+        buffer[bytes] = '\0';
+        printf("%s", buffer);
+    }
+
     close(data_sock);
+    recv_response(control_sock);
+}
 
-  
-    char *retr_cmd = "RETR test.txt\r\n";
-    send(sock, retr_cmd, strlen(retr_cmd), 0);
-    recv(data_sock, buffer, sizeof(buffer), 0);
-    printf("File Content:\n%s\n", buffer);
+void ftp_retr(int control_sock, const char* filename) {
+    int data_sock = open_data_connection(control_sock);
 
-    close(sock);
+    char cmd[256];
+    sprintf(cmd, "RETR %s\r\n", filename);
+    send(control_sock, cmd, strlen(cmd), 0);
 
+    char buffer[1024];
+    FILE *fp = fopen(filename, "wb");
+    if (!fp) {
+        perror("File open error");
+        close(data_sock);
+        return;
+    }
+
+    int bytes;
+    while ((bytes = recv(data_sock, buffer, sizeof(buffer), 0)) > 0) {
+        fwrite(buffer, 1, bytes, fp);
+    }
+
+    fclose(fp);
+    close(data_sock);
+    recv_response(control_sock);
+}
+
+void ftp_stor(int control_sock, const char* filename) {
+    int data_sock = open_data_connection(control_sock);
+
+    char cmd[256];
+    sprintf(cmd, "STOR %s\r\n", filename);
+    send(control_sock, cmd, strlen(cmd), 0);
+
+    char buffer[1024];
+    FILE *fp = fopen(filename, "rb");
+    if (!fp) {
+        perror("File open error");
+        close(data_sock);
+        return;
+    }
+
+    int bytes;
+    while ((bytes = fread(buffer, 1, sizeof(buffer), fp)) > 0) {
+        send(data_sock, buffer, bytes, 0);
+    }
+
+    fclose(fp);
+    close(data_sock);
+    recv_response(control_sock);
+}
+
+void ftp_delete(int control_sock, const char* filename) {
+    char cmd[256];
+    sprintf(cmd, "DELE %s\r\n", filename);
+    send(control_sock, cmd, strlen(cmd), 0);
+    recv_response(control_sock);
+}
+
+void ftp_cwd(int control_sock, const char* dirname) {
+    char cmd[256];
+    sprintf(cmd, "CWD %s\r\n", dirname);
+    send(control_sock, cmd, strlen(cmd), 0);
+    recv_response(control_sock);
+}
+
+int main() {
+    int control_sock;
+    struct sockaddr_in server;
+
+    control_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (control_sock < 0) {
+        perror("Control socket failed");
+        exit(1);
+    }
+
+    server.sin_family = AF_INET;
+    server.sin_port = htons(FTP_PORT);
+    server.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    if (connect(control_sock, (struct sockaddr *)&server, sizeof(server)) < 0) {
+        perror("Connection failed");
+        exit(1);
+    }
+
+    ftp_login(control_sock, "myuser", "123456");
+
+    // Test các chức năng
+    ftp_list(control_sock);
+    ftp_cwd(control_sock, "/subfolder");
+    ftp_stor(control_sock, "upload.txt");
+    ftp_retr(control_sock, "test.txt");
+    ftp_delete(control_sock, "deleteme.txt");
+
+    close(control_sock);
     return 0;
 }
