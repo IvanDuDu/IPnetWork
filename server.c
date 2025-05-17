@@ -2,168 +2,224 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/socket.h>
 #include <arpa/inet.h>
 
 #define FTP_PORT 21
+#define BUFFER_SIZE 1024
 
-void recv_response(int sock) {
-    char buffer[1024];
-    int bytes = recv(sock, buffer, sizeof(buffer) - 1, 0);
-    buffer[bytes] = '\0';
-    printf("Server: %s\n", buffer);
-}
-
-int open_data_connection(int control_sock) {
-    char buffer[1024];
-    char *pasv = "PASV\r\n";
-    send(control_sock, pasv, strlen(pasv), 0);
-    recv(control_sock, buffer, sizeof(buffer), 0);
-    printf("Server: %s\n", buffer);
-
-    int ip1, ip2, ip3, ip4, port1, port2;
-    sscanf(buffer, "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)",
-           &ip1, &ip2, &ip3, &ip4, &port1, &port2);
-    int data_port = port1 * 256 + port2;
-
-    struct sockaddr_in data_addr;
-    int data_sock = socket(AF_INET, SOCK_STREAM, 0);
-    data_addr.sin_family = AF_INET;
-    data_addr.sin_port = htons(data_port);
-    data_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-
-    if (connect(data_sock, (struct sockaddr *)&data_addr, sizeof(data_addr)) < 0) {
-        perror("Data connection failed");
-        exit(1);
-    }
-
-    return data_sock;
-}
-
-void ftp_login(int control_sock, const char* user, const char* pass) {
-    char buffer[1024];
-    recv_response(control_sock);
-
-    char cmd[256];
-    sprintf(cmd, "USER %s\r\n", user);
-    send(control_sock, cmd, strlen(cmd), 0);
-    recv_response(control_sock);
-
-    sprintf(cmd, "PASS %s\r\n", pass);
-    send(control_sock, cmd, strlen(cmd), 0);
-    recv_response(control_sock);
-}
-
-void ftp_list(int control_sock) {
-    int data_sock = open_data_connection(control_sock);
-
-    char *list_cmd = "LIST\r\n";
-    send(control_sock, list_cmd, strlen(list_cmd), 0);
-
-    char buffer[1024];
-    int bytes;
-    printf("File List:\n");
-    while ((bytes = recv(data_sock, buffer, sizeof(buffer)-1, 0)) > 0) {
-        buffer[bytes] = '\0';
-        printf("%s", buffer);
-    }
-
-    close(data_sock);
-    recv_response(control_sock);
-}
-
-void ftp_retr(int control_sock, const char* filename) {
-    int data_sock = open_data_connection(control_sock);
-
-    char cmd[256];
-    sprintf(cmd, "RETR %s\r\n", filename);
-    send(control_sock, cmd, strlen(cmd), 0);
-
-    char buffer[1024];
-    FILE *fp = fopen(filename, "wb");
-    if (!fp) {
-        perror("File open error");
-        close(data_sock);
-        return;
-    }
-
-    int bytes;
-    while ((bytes = recv(data_sock, buffer, sizeof(buffer), 0)) > 0) {
-        fwrite(buffer, 1, bytes, fp);
-    }
-
-    fclose(fp);
-    close(data_sock);
-    recv_response(control_sock);
-}
-
-void ftp_stor(int control_sock, const char* filename) {
-    int data_sock = open_data_connection(control_sock);
-
-    char cmd[256];
-    sprintf(cmd, "STOR %s\r\n", filename);
-    send(control_sock, cmd, strlen(cmd), 0);
-
-    char buffer[1024];
-    FILE *fp = fopen(filename, "rb");
-    if (!fp) {
-        perror("File open error");
-        close(data_sock);
-        return;
-    }
-
-    int bytes;
-    while ((bytes = fread(buffer, 1, sizeof(buffer), fp)) > 0) {
-        send(data_sock, buffer, bytes, 0);
-    }
-
-    fclose(fp);
-    close(data_sock);
-    recv_response(control_sock);
-}
-
-void ftp_delete(int control_sock, const char* filename) {
-    char cmd[256];
-    sprintf(cmd, "DELE %s\r\n", filename);
-    send(control_sock, cmd, strlen(cmd), 0);
-    recv_response(control_sock);
-}
-
-void ftp_cwd(int control_sock, const char* dirname) {
-    char cmd[256];
-    sprintf(cmd, "CWD %s\r\n", dirname);
-    send(control_sock, cmd, strlen(cmd), 0);
-    recv_response(control_sock);
-}
-
-int main() {
-    int control_sock;
+// Hàm connect socket control
+int connect_control_socket(const char* ip) {
+    int sock;
     struct sockaddr_in server;
+    char buffer[BUFFER_SIZE];
 
-    control_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (control_sock < 0) {
-        perror("Control socket failed");
-        exit(1);
-    }
-
+    sock = socket(AF_INET, SOCK_STREAM, 0);
     server.sin_family = AF_INET;
     server.sin_port = htons(FTP_PORT);
-    server.sin_addr.s_addr = inet_addr("127.0.0.1");
+    server.sin_addr.s_addr = inet_addr(ip);
 
-    if (connect(control_sock, (struct sockaddr *)&server, sizeof(server)) < 0) {
+    if (connect(sock, (struct sockaddr*)&server, sizeof(server)) < 0) {
         perror("Connection failed");
         exit(1);
     }
 
+    recv(sock, buffer, sizeof(buffer), 0);
+    printf("Server: %s\n", buffer);
+
+    return sock;
+}
+
+// Hàm login
+void ftp_login(int sock, const char* user, const char* pass) {
+    char buffer[BUFFER_SIZE];
+    char cmd[256];
+
+    sprintf(cmd, "USER %s\r\n", user);
+    send(sock, cmd, strlen(cmd), 0);
+    recv(sock, buffer, sizeof(buffer), 0);
+    printf("%s", buffer);
+
+    sprintf(cmd, "PASS %s\r\n", pass);
+    send(sock, cmd, strlen(cmd), 0);
+    recv(sock, buffer, sizeof(buffer), 0);
+    printf("%s", buffer);
+}
+
+// Hàm PASV
+int ftp_pasv(int control_sock) {
+    char buffer[BUFFER_SIZE];
+    int ip1, ip2, ip3, ip4, p1, p2;
+    struct sockaddr_in data_addr;
+    int data_sock;
+
+    send(control_sock, "PASV\r\n", 6, 0);
+    recv(control_sock, buffer, sizeof(buffer), 0);
+    printf("%s", buffer);
+
+    sscanf(buffer, "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)",
+           &ip1, &ip2, &ip3, &ip4, &p1, &p2);
+
+    int port = p1 * 256 + p2;
+
+    data_sock = socket(AF_INET, SOCK_STREAM, 0);
+    data_addr.sin_family = AF_INET;
+    data_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    data_addr.sin_port = htons(port);
+
+    if (connect(data_sock, (struct sockaddr*)&data_addr, sizeof(data_addr)) < 0) {
+        perror("Data connection failed");
+        return -1;
+    }
+    return data_sock;
+}
+
+// LIST
+void ftp_list(int control_sock) {
+    char buffer[BUFFER_SIZE];
+    int data_sock = ftp_pasv(control_sock);
+    if (data_sock < 0) return;
+
+    send(control_sock, "LIST\r\n", 6, 0);
+    recv(control_sock, buffer, sizeof(buffer), 0);
+    printf("%s", buffer);
+
+    printf("File list:\n");
+    int n;
+    while ((n = recv(data_sock, buffer, sizeof(buffer), 0)) > 0) {
+        write(1, buffer, n);
+    }
+    close(data_sock);
+    recv(control_sock, buffer, sizeof(buffer), 0);
+    printf("%s", buffer);
+}
+
+// RETR
+void ftp_retr(int control_sock, const char* filename) {
+    char buffer[BUFFER_SIZE];
+    char cmd[256];
+    int data_sock = ftp_pasv(control_sock);
+    if (data_sock < 0) return;
+
+    sprintf(cmd, "RETR %s\r\n", filename);
+    send(control_sock, cmd, strlen(cmd), 0);
+    recv(control_sock, buffer, sizeof(buffer), 0);
+    printf("%s", buffer);
+
+    FILE* fp = fopen(filename, "w");
+    int n;
+    while ((n = recv(data_sock, buffer, sizeof(buffer), 0)) > 0) {
+        fwrite(buffer, 1, n, fp);
+    }
+    fclose(fp);
+    close(data_sock);
+    recv(control_sock, buffer, sizeof(buffer), 0);
+    printf("%s", buffer);
+}
+
+// STOR
+void ftp_stor(int control_sock, const char* filename) {
+    char buffer[BUFFER_SIZE];
+    char cmd[256];
+    int data_sock = ftp_pasv(control_sock);
+    if (data_sock < 0) return;
+
+    sprintf(cmd, "STOR %s\r\n", filename);
+    send(control_sock, cmd, strlen(cmd), 0);
+    recv(control_sock, buffer, sizeof(buffer), 0);
+    printf("%s", buffer);
+
+    FILE* fp = fopen(filename, "r");
+    int n;
+    while ((n = fread(buffer, 1, sizeof(buffer), fp)) > 0) {
+        send(data_sock, buffer, n, 0);
+    }
+    fclose(fp);
+    close(data_sock);
+    recv(control_sock, buffer, sizeof(buffer), 0);
+    printf("%s", buffer);
+}
+
+// DELE
+void ftp_delete(int control_sock, const char* filename) {
+    char buffer[BUFFER_SIZE];
+    char cmd[256];
+
+    sprintf(cmd, "DELE %s\r\n", filename);
+    send(control_sock, cmd, strlen(cmd), 0);
+    recv(control_sock, buffer, sizeof(buffer), 0);
+    printf("%s", buffer);
+}
+
+// CWD
+void ftp_cwd(int control_sock, const char* dirname) {
+    char buffer[BUFFER_SIZE];
+    char cmd[256];
+
+    sprintf(cmd, "CWD %s\r\n", dirname);
+    send(control_sock, cmd, strlen(cmd), 0);
+    recv(control_sock, buffer, sizeof(buffer), 0);
+    printf("%s", buffer);
+}
+
+// MENU
+void show_menu() {
+    printf("\n========== FTP Client Menu ==========\n");
+    printf("1. LIST file trên server\n");
+    printf("2. Tải file từ server (RETR)\n");
+    printf("3. Gửi file lên server (STOR)\n");
+    printf("4. Xóa file trên server (DELE)\n");
+    printf("5. Đổi thư mục làm việc (CWD)\n");
+    printf("0. Thoát\n");
+    printf("Chọn: ");
+}
+
+int main() {
+    int control_sock = connect_control_socket("127.0.0.1");
     ftp_login(control_sock, "myuser", "123456");
 
-    // Test các chức năng
-    ftp_list(control_sock);
-    ftp_cwd(control_sock, "/subfolder");
-    ftp_stor(control_sock, "upload.txt");
-    ftp_retr(control_sock, "test.txt");
-    ftp_delete(control_sock, "deleteme.txt");
+    int choice;
+    char name[256];
 
-    close(control_sock);
+    while (1) {
+        show_menu();
+        scanf("%d", &choice);
+        getchar(); // clear newline
+
+        switch (choice) {
+            case 1:
+                ftp_list(control_sock);
+                break;
+            case 2:
+                printf("Nhập tên file cần tải: ");
+                fgets(name, sizeof(name), stdin);
+                name[strcspn(name, "\n")] = 0;
+                ftp_retr(control_sock, name);
+                break;
+            case 3:
+                printf("Nhập tên file cần gửi: ");
+                fgets(name, sizeof(name), stdin);
+                name[strcspn(name, "\n")] = 0;
+                ftp_stor(control_sock, name);
+                break;
+            case 4:
+                printf("Nhập tên file cần xóa: ");
+                fgets(name, sizeof(name), stdin);
+                name[strcspn(name, "\n")] = 0;
+                ftp_delete(control_sock, name);
+                break;
+            case 5:
+                printf("Nhập thư mục cần chuyển đến: ");
+                fgets(name, sizeof(name), stdin);
+                name[strcspn(name, "\n")] = 0;
+                ftp_cwd(control_sock, name);
+                break;
+            case 0:
+                send(control_sock, "QUIT\r\n", 6, 0);
+                close(control_sock);
+                exit(0);
+            default:
+                printf("Lựa chọn không hợp lệ!\n");
+        }
+    }
     return 0;
 }
