@@ -192,6 +192,33 @@ void ftp_cwd(int control_sock, const char* dirname) {
     recv(control_sock, buffer, sizeof(buffer), 0);
     printf("%s", buffer);
 }
+// RNTO and RNFR
+// RNFR và RNTO
+void ftp_rename(int control_sock, const char* oldname, const char* newname) {
+    char buffer[BUFFER_SIZE];
+    char cmd[256];
+
+    // Gửi RNFR
+    sprintf(cmd, "RNFR %s\r\n", oldname);
+    send(control_sock, cmd, strlen(cmd), 0);
+    recv(control_sock, buffer, sizeof(buffer), 0);
+    printf("%s", buffer);
+
+    // Gửi RNTO
+    sprintf(cmd, "RNTO %s\r\n", newname);
+    send(control_sock, cmd, strlen(cmd), 0);
+    recv(control_sock, buffer, sizeof(buffer), 0);
+    printf("%s", buffer);
+}
+//QUIT
+void ftp_quit(int control_sock) {
+    char buffer[BUFFER_SIZE];
+    send(control_sock, "QUIT\r\n", 6, 0);
+    recv(control_sock, buffer, sizeof(buffer), 0);
+    printf("%s", buffer);
+    close(control_sock);
+}
+
 
 // MENU
 void show_menu() {
@@ -201,9 +228,11 @@ void show_menu() {
     printf("3. Gửi file lên server (STOR)\n");
     printf("4. Xóa file trên server (DELE)\n");
     printf("5. Đổi thư mục làm việc (CWD)\n");
+    printf("6. Đổi tên file (RNFR + RNTO)\n");
     printf("0. Thoát\n");
     printf("Chọn: ");
 }
+
 
 int main() {
     int control_sock = connect_control_socket("127.0.0.1");
@@ -245,9 +274,23 @@ int main() {
                 name[strcspn(name, "\n")] = 0;
                 ftp_cwd(control_sock, name);
                 break;
+            case 6:
+                {
+                    char oldname[256], newname[256];
+                    printf("Nhập tên file hiện tại: ");
+                    fgets(oldname, sizeof(oldname), stdin);
+                    oldname[strcspn(oldname, "\n")] = 0;
+            
+                    printf("Nhập tên mới: ");
+                    fgets(newname, sizeof(newname), stdin);
+                    newname[strcspn(newname, "\n")] = 0;
+            
+                    ftp_rename(control_sock, oldname, newname);
+                    break;
+                }
+
             case 0:
-                send(control_sock, "QUIT\r\n", 6, 0);
-                close(control_sock);
+                ftp_quit(control_sock);
                 exit(0);
             default:
                 printf("Lựa chọn không hợp lệ!\n");
