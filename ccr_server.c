@@ -1,143 +1,222 @@
-// server.c
+// concurrent_server.c
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <signal.h>
+#include <sys/wait.h>
 
-#define PORT 12345
-#define MAX 1024
+#define PORT 8080
+#define BUFFER_SIZE 1024
+#define USER_COUNT 800
 
-int board[3][3]; // 0: O, 1: X, -1: empty
+struct users
+{
+    char  username[50];
+    char  password[50];
+};
+typedef struct users user;
+user allUser[100];
+int count;
 
-//khoi tao bang rong
-void init_board() {
-    for (int i = 0; i < 3; i++)
-        for (int j = 0; j < 3; j++)
-            board[i][j] = -1;
-}
-//in ra bang sau moi lan cap nhat
-void print_board() {
-    printf("\nBoard:\n");
-    for (int i = 0; i < 3; i++) {
-        for (int j = 0; j < 3; j++) {
-            if (board[i][j] == -1) printf(".");
-            else if (board[i][j] == 0) printf("O");
-            else printf("X");
-            printf(" ");
+
+
+int readAccount(const char* filename, user allUser[], int * count){
+    FILE* file= fopen(filename, "r");
+    if(!file){
+        printf(" Cannot open file");
+        return -1;
+    }
+    char line[256];
+    *count=0;
+    while(fgets( line, sizeof(line),file)){
+        line[strcspn(line,"\n")] =0;
+
+        char *token = strtok (line,":");
+        if(token){
+            strcpy(allUser[*count].username, token);
+        
         }
-        printf("\n");
+        token =strtok(NULL,":");
+        if(token){
+            strcpy(allUser[*count].password,token);
+        }
+        (*count)++;
+        
     }
-}
-//kiem tra xem da co nguoi thang cuoc chua
-int check_winner() {
-    for (int i = 0; i < 3; i++) {
-        if (board[i][0] != -1 && board[i][0] == board[i][1] && board[i][1] == board[i][2])
-            return board[i][0];
-        if (board[0][i] != -1 && board[0][i] == board[1][i] && board[1][i] == board[2][i])
-            return board[0][i];
-    }
-    if (board[0][0] != -1 && board[0][0] == board[1][1] && board[1][1] == board[2][2])
-        return board[0][0];
-    if (board[0][2] != -1 && board[0][2] == board[1][1] && board[1][1] == board[2][0])
-        return board[0][2];
-    return -1;
-}
-//kiem tra hoa
-int is_draw() {
-    for (int i = 0; i < 3; i++)
-        for (int j = 0; j < 3; j++)
-            if (board[i][j] == -1)
-                return 0;
+    fclose(file);
     return 1;
 }
-//loan bao thong diep
-void send_to_all(int clients[], char *msg) {
-    send(clients[0], msg, strlen(msg), 0);
-    send(clients[1], msg, strlen(msg), 0);
-    sleep(1);
+
+int writeAccount(const char* filename, user allUser[], int count){
+    FILE* file= fopen(filename, "w");
+    if(!file){
+        printf(" Cannot open file");
+        return -1;
+    }
+ 
+    for(int i =0 ; i< count; i++){
+        fprintf( file, "%s:%s\n",allUser[i].username, allUser[i].password);
+    }
+    fclose(file);
+    return 1;
+}
+
+int endWith( const char *str, const char * suffix){
+     if( ! str || ! suffix){
+        return 0;
+     }
+
+    size_t strLen = strlen( str);
+    size_t suffixLen = strlen( suffix);
+
+    if(strLen > suffixLen) return 0;
+
+    return (strcmp(str+strLen - suffixLen,suffix)==0);
+
+}
+
+int isValid( const char* username, const char* password, user allUser[]){
+
+    if(endWith(username, "@example.com")){
+        for( int i=0 ; i < sizeof(allUser)/sizeof(allUser[0]); i++){
+            if(strcmp(allUser[i].username,username)==0) return -1;
+        }
+        return 1;
+
+    }else{
+        return 0;
+    }
+}
+
+
+
+
+// Signal handler to prevent zombie processes
+void sigchld_handler(int sig) {
+    (void)sig; // Ignore unused parameter warning
+    while (waitpid(-1, NULL, WNOHANG) > 0);
+}
+
+void handle_client(int connfd) {
+    char buffer[BUFFER_SIZE];
+    int n;
+
+    // Communication with client
+    while ((n = recv(connfd, buffer, BUFFER_SIZE, 0)) > 0) {
+        buffer[n] = '\0'; // Null-terminate the received string
+        printf("Client: %s\n", buffer);
+
+        char *username = strtok (buffer,":");
+        char *password=  strtok (NULL,":");
+        switch (isValid(username,password,allUser))
+        {
+        case -1:
+            strcpy("ERROR email da ton tai ", buffer);
+            break;
+        case 0:
+            strcpy("ERROR cu phap khong hop le ", buffer);
+            break;
+        case 1:
+           strcpy( allUser[count].username,username);
+           strcpy( allUser[count].password,password);
+           strcpy("OK dang ky thanh cong ", buffer);
+            break;
+        default:
+            break;
+        }
+
+
+
+
+        // Echo back the message to the client
+        send(connfd, buffer, n, 0);
+    }
+
+    if (n == 0) {
+        printf("Client disconnected.\n");
+    } else {
+        perror("recv failed");
+    }
+
+    // Close the client socket
+    close(connfd);
 }
 
 int main() {
-    int server_fd, new_socket[2];  //tao socket
-    struct sockaddr_in address;
-    int addrlen = sizeof(address);
-    char buffer[MAX];
-    int current_player = 0;
+    
+    
+    if(readAccount("/home/sigmaduck/Downloads/Source_codes_Ch4/users.txt", allUser , &count)){
+        printf("read file successfully, number of account : %d", count);
+        
+    }else{
+        printf("read file failed");
+    };
 
-    init_board();
+    int listenfd, connfd;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+    pid_t pid;
 
-    server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd == 0) {
-        perror("socket failed");
+    // Create the listening socket
+    if ((listenfd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+        perror("Socket creation failed");
         exit(EXIT_FAILURE);
     }
 
-    int opt = 1;
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    // Setup the server address structure
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(PORT);
 
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(PORT);
-
-    bind(server_fd, (struct sockaddr *)&address, sizeof(address));
-    listen(server_fd, 2);
-
-    printf("Waiting for players...\n");
-    for (int i = 0; i < 2; i++) {   //wait for 2 players
-        new_socket[i] = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen);
-        printf("Player %d connected.\n", i);
-        char msg[32];
-        sprintf(msg, "WELCOME %d\n", i);
-        send(new_socket[i], msg, strlen(msg), 0);
+    // Bind the listening socket to the specified port
+    if (bind(listenfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Bind failed");
+        close(listenfd);
+        exit(EXIT_FAILURE);
     }
 
+    // Listen for incoming connections
+    if (listen(listenfd, 5) < 0) {
+        perror("Listen failed");
+        close(listenfd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Handle SIGCHLD to prevent zombie processes
+    signal(SIGCHLD, sigchld_handler);
+
+    printf("Server is listening on port %d...\n", PORT);
+
+    // Server loop to accept multiple clients
     while (1) {
-        char turn_msg[32];
-        sprintf(turn_msg, "TURN %d\n", current_player);
-        send(new_socket[current_player], turn_msg, strlen(turn_msg), 0);
-        printf("1.5\n");
-        memset(buffer, 0, MAX);
-        int valread = read(new_socket[current_player], buffer, MAX);
-        if (valread <= 0) break;
-
-        int row, col;
-        if (sscanf(buffer, "MOVE %d %d", &row, &col) != 2) {
-            send(new_socket[current_player], "INVALID\n", 8, 0);
-            sleep(1);
+        // Accept an incoming connection
+        connfd = accept(listenfd, (struct sockaddr *)&client_addr, &addr_len);
+        if (connfd < 0) {
+            perror("Accept failed");
             continue;
         }
 
-        if (row < 0 || row > 2 || col < 0 || col > 2 || board[row][col] != -1) {
-            send(new_socket[current_player], "INVALID\n", 8, 0);
-            sleep(1);
-            continue;
+        // Fork a child process to handle the client
+        pid = fork();
+        if (pid < 0) {
+            perror("Fork failed");
+            close(connfd);
+        } else if (pid == 0) {
+            // Child process: handle the client
+            close(listenfd);  // Close the listening socket in the child process
+            handle_client(connfd);
+            close(connfd);
+            exit(0);
+        } else {
+            // Parent process: continue accepting new clients
+            close(connfd);  // Close the client socket in the parent process
         }
-
-        board[row][col] = current_player;
-        print_board();
-
-        char move_msg[32];
-        sprintf(move_msg, "MOVE %d %d %d\n", current_player, row, col);
-        send_to_all(new_socket, move_msg);
-
-        int winner = check_winner();
-        printf("3! \n");
-        if (winner != -1) {
-            char win_msg[32];
-            sprintf(win_msg, "WIN %d\n", winner);
-            send_to_all(new_socket, win_msg);
-            break;
-        } else if (is_draw()) {
-            send_to_all(new_socket, "DRAW\n");
-            break;
-        }
-
-        current_player = 1 - current_player;
     }
 
-    close(new_socket[0]);
-    close(new_socket[1]);
-    close(server_fd);
     return 0;
 }
