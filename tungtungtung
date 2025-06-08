@@ -1,222 +1,178 @@
-// concurrent_server.c
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <signal.h>
-#include <sys/wait.h>
 
-#define PORT 8080
+#define PORT 9090
 #define BUFFER_SIZE 1024
-#define USER_COUNT 800
+#define MAX_CONTACTS 100
 
-struct users
-{
-    char  username[50];
-    char  password[50];
+struct contact {
+    char username[50];
+    char phone[15];
 };
-typedef struct users user;
-user allUser[100];
-int count;
+typedef struct contact Contact;
 
+Contact contactList[MAX_CONTACTS];
+int contactCount = 0;
 
+// Hàm kiểm tra số điện thoại hợp lệ
+int isValidPhone(const char* phone) {
+    int len = strlen(phone);
+    if (len < 10 || len > 11) return 0;
+    for (int i = 0; i < len; i++) {
+        if (phone[i] < '0' || phone[i] > '9') return 0;
+    }
+    return 1;
+}
 
-int readAccount(const char* filename, user allUser[], int * count){
-    FILE* file= fopen(filename, "r");
-    if(!file){
-        printf(" Cannot open file");
+// Đọc danh bạ từ file vào mảng contactList
+int readContacts(const char* filename) {
+    FILE* file = fopen(filename, "r");
+    if (!file) {
+        perror("Cannot open contacts file");
         return -1;
     }
-    char line[256];
-    *count=0;
-    while(fgets( line, sizeof(line),file)){
-        line[strcspn(line,"\n")] =0;
 
-        char *token = strtok (line,":");
-        if(token){
-            strcpy(allUser[*count].username, token);
-        
+    char line[100];
+    contactCount = 0;
+    while (fgets(line, sizeof(line), file)) {
+        line[strcspn(line, "\n")] = 0;
+        char* token = strtok(line, ":");
+        if (token) {
+            strcpy(contactList[contactCount].username, token);
+            token = strtok(NULL, ":");
+            if (token) {
+                strcpy(contactList[contactCount].phone, token);
+                contactCount++;
+            }
         }
-        token =strtok(NULL,":");
-        if(token){
-            strcpy(allUser[*count].password,token);
-        }
-        (*count)++;
-        
     }
+
     fclose(file);
     return 1;
 }
 
-int writeAccount(const char* filename, user allUser[], int count){
-    FILE* file= fopen(filename, "w");
-    if(!file){
-        printf(" Cannot open file");
+// Ghi lại contactList vào file
+int writeContacts(const char* filename) {
+    FILE* file = fopen(filename, "w");
+    if (!file) {
+        perror("Cannot open contacts file for writing");
         return -1;
     }
- 
-    for(int i =0 ; i< count; i++){
-        fprintf( file, "%s:%s\n",allUser[i].username, allUser[i].password);
+
+    for (int i = 0; i < contactCount; i++) {
+        fprintf(file, "%s:%s\n", contactList[i].username, contactList[i].phone);
     }
+
     fclose(file);
     return 1;
 }
 
-int endWith( const char *str, const char * suffix){
-     if( ! str || ! suffix){
-        return 0;
-     }
-
-    size_t strLen = strlen( str);
-    size_t suffixLen = strlen( suffix);
-
-    if(strLen > suffixLen) return 0;
-
-    return (strcmp(str+strLen - suffixLen,suffix)==0);
-
-}
-
-int isValid( const char* username, const char* password, user allUser[]){
-
-    if(endWith(username, "@example.com")){
-        for( int i=0 ; i < sizeof(allUser)/sizeof(allUser[0]); i++){
-            if(strcmp(allUser[i].username,username)==0) return -1;
-        }
-        return 1;
-
-    }else{
-        return 0;
-    }
-}
-
-
-
-
-// Signal handler to prevent zombie processes
-void sigchld_handler(int sig) {
-    (void)sig; // Ignore unused parameter warning
-    while (waitpid(-1, NULL, WNOHANG) > 0);
-}
-
+// Xử lý yêu cầu client
 void handle_client(int connfd) {
     char buffer[BUFFER_SIZE];
     int n;
 
-    // Communication with client
-    while ((n = recv(connfd, buffer, BUFFER_SIZE, 0)) > 0) {
-        buffer[n] = '\0'; // Null-terminate the received string
-        printf("Client: %s\n", buffer);
+    // Nhận dữ liệu
+    n = recv(connfd, buffer, BUFFER_SIZE, 0);
+    if (n <= 0) {
+        perror("recv failed");
+        close(connfd);
+        return;
+    }
+    buffer[n] = '\0';
 
-        char *username = strtok (buffer,":");
-        char *password=  strtok (NULL,":");
-        switch (isValid(username,password,allUser))
-        {
-        case -1:
-            strcpy("ERROR email da ton tai ", buffer);
-            break;
-        case 0:
-            strcpy("ERROR cu phap khong hop le ", buffer);
-            break;
-        case 1:
-           strcpy( allUser[count].username,username);
-           strcpy( allUser[count].password,password);
-           strcpy("OK dang ky thanh cong ", buffer);
-            break;
-        default:
+    printf("Client: %s\n", buffer);
+
+    // Tách dữ liệu username|old_phone|new_phone
+    char* username = strtok(buffer, "|");
+    char* old_phone = strtok(NULL, "|");
+    char* new_phone = strtok(NULL, "|");
+
+    // Kiểm tra cú pháp
+    if (!username || !old_phone || !new_phone || strtok(NULL, "|") != NULL ||
+        !isValidPhone(old_phone) || !isValidPhone(new_phone)) {
+        strcpy(buffer, "ERROR Cú pháp không hợp lệ");
+        send(connfd, buffer, strlen(buffer), 0);
+        close(connfd);
+        return;
+    }
+
+    // Tìm username
+    int found = 0;
+    for (int i = 0; i < contactCount; i++) {
+        if (strcmp(contactList[i].username, username) == 0) {
+            found = 1;
+            if (strcmp(contactList[i].phone, old_phone) == 0) {
+                // Cập nhật số mới
+                strcpy(contactList[i].phone, new_phone);
+                writeContacts("contacts.txt");
+                strcpy(buffer, "OK Cập nhật thành công");
+            } else {
+                strcpy(buffer, "ERROR Số điện thoại cũ không đúng");
+            }
             break;
         }
-
-
-
-
-        // Echo back the message to the client
-        send(connfd, buffer, n, 0);
     }
 
-    if (n == 0) {
-        printf("Client disconnected.\n");
-    } else {
-        perror("recv failed");
+    if (!found) {
+        strcpy(buffer, "ERROR Tài khoản không tồn tại");
     }
 
-    // Close the client socket
+    send(connfd, buffer, strlen(buffer), 0);
     close(connfd);
 }
 
 int main() {
-    
-    
-    if(readAccount("/home/sigmaduck/Downloads/Source_codes_Ch4/users.txt", allUser , &count)){
-        printf("read file successfully, number of account : %d", count);
-        
-    }else{
-        printf("read file failed");
-    };
+    if (readContacts("contacts.txt") < 0) {
+        return 1;
+    }
 
     int listenfd, connfd;
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_len = sizeof(client_addr);
-    pid_t pid;
 
-    // Create the listening socket
-    if ((listenfd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+    // Tạo socket
+    if ((listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("Socket creation failed");
         exit(EXIT_FAILURE);
     }
 
-    // Setup the server address structure
+    // Thiết lập địa chỉ server
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port = htons(PORT);
 
-    // Bind the listening socket to the specified port
-    if (bind(listenfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+    // Bind socket
+    if (bind(listenfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         perror("Bind failed");
         close(listenfd);
         exit(EXIT_FAILURE);
     }
 
-    // Listen for incoming connections
+    // Lắng nghe kết nối
     if (listen(listenfd, 5) < 0) {
         perror("Listen failed");
         close(listenfd);
         exit(EXIT_FAILURE);
     }
 
-    // Handle SIGCHLD to prevent zombie processes
-    signal(SIGCHLD, sigchld_handler);
+    printf("Phone update server is listening on port %d...\n", PORT);
 
-    printf("Server is listening on port %d...\n", PORT);
-
-    // Server loop to accept multiple clients
+    // Vòng lặp nhận client tuần tự
     while (1) {
-        // Accept an incoming connection
-        connfd = accept(listenfd, (struct sockaddr *)&client_addr, &addr_len);
+        connfd = accept(listenfd, (struct sockaddr*)&client_addr, &addr_len);
         if (connfd < 0) {
             perror("Accept failed");
             continue;
         }
 
-        // Fork a child process to handle the client
-        pid = fork();
-        if (pid < 0) {
-            perror("Fork failed");
-            close(connfd);
-        } else if (pid == 0) {
-            // Child process: handle the client
-            close(listenfd);  // Close the listening socket in the child process
-            handle_client(connfd);
-            close(connfd);
-            exit(0);
-        } else {
-            // Parent process: continue accepting new clients
-            close(connfd);  // Close the client socket in the parent process
-        }
+        // Xử lý client
+        handle_client(connfd);
     }
 
+    close(listenfd);
     return 0;
 }
